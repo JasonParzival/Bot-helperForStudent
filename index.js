@@ -1,14 +1,18 @@
 const TelegramBot = require('node-telegram-bot-api');
 
+const db = require('./database');
+
 const token = require('./data.js');
 
 const bot = new TelegramBot(token, { polling: true });
 
+//Меню
 bot.setMyCommands([
     {command: '/start', description: 'Начало'},
     {command: '/help', description: 'Помощь'}
 ]);
 
+//Команда приветствия
 bot.onText(/\/start/, (msg) => {
     const chatId = msg.chat.id;
 
@@ -35,12 +39,13 @@ bot.onText(/\/start/, (msg) => {
     );
 });
 
-const array = ['ИСТб-23-2', 'ИСТб-23-1', 'ИСТб-23-3', 'ЭВМб-23-1'];
-const quantityOfGroups = array.length - 1;
-//let currentK = 0;
+// Объект под состояния пользователей
+const waitingForAnswer = {};
 
+// Объект под данные пользователя
 const usersData = {};
 
+// Присвоение страницы у пользователя
 function setUserPage(userId, page) {
   if (!usersData[userId]) {
     usersData[userId] = {};
@@ -48,84 +53,119 @@ function setUserPage(userId, page) {
   usersData[userId].page = page;
 }
 
+// Получение страницы у пользователя
 function getUserPage(userId) {
   return usersData[userId]?.page ?? -1; 
 }
 
-bot.on('callback_query', (callbackQuery) => {
-  const message = callbackQuery.message;
-  const data = callbackQuery.data;
+//Реакция на кнопки
+bot.on('callback_query', async (callbackQuery) => {
+    const message = callbackQuery.message;
+    const data = callbackQuery.data;
 
-  const userId = message.chat.id;
+    const userId = message.chat.id;
 
-  try {
-    if (data === 'start_group_prev') {
-        if (getUserPage(userId) == -1) {
-            setUserPage(userId, 0);
-        }
-        else if (getUserPage(userId) == 0) {
-            setUserPage(userId, quantityOfGroups);
-        }
-        else {
-            setUserPage(userId, getUserPage(userId) - 1);
-        }
+    // Реализовал запрос к БД, но это плохая реализация, ведь
+    // каждый раз когда пользователь будет нажимать на кнопку
+    // будет происходить запрос к БД, что не есть хорошо
+    // Нужно будет придумать другой способ
+    const [array] = await db.query('SELECT * FROM Groups');
+    const quantityOfGroups = array.length - 1;
 
-        bot.editMessageText(`Какая вам группа нужна?
-Выберите из ниже предложенных:
-        ` + array[getUserPage(userId)], {
-            chat_id: message.chat.id,
-            message_id: message.message_id,
-            reply_markup: {
-                inline_keyboard: [
-                    [
-                        { text: 'Выбрать группу', callback_data: 'start_select_group' },
-                        { text: 'Добавить группу', callback_data: 'start_add_group' }
-                    ],
-                    [
-                        { text: '⬅️ Назад', callback_data: 'start_group_prev' },
-                        { text: 'Вперед ➡️', callback_data: 'start_group_next' }
-                    ]
-                ]
+    try {
+        // Нажатие на кнопку назад
+        if (data === 'start_group_prev') {
+            if (getUserPage(userId) == -1) {
+                setUserPage(userId, 0);
             }
-        });
-    } else if (data === 'start_group_next') {
-        if (getUserPage(userId) == -1) {
-            setUserPage(userId, 0);
-        }
-        else if (getUserPage(userId) == quantityOfGroups) {
-            setUserPage(userId, 0);
-        }
-        else {
-            setUserPage(userId, getUserPage(userId) + 1);
-        }
-
-        bot.editMessageText(`Какая вам группа нужна?
-Выберите из ниже предложенных:
-        ` + array[getUserPage(userId)], {
-            chat_id: message.chat.id,
-            message_id: message.message_id,
-            reply_markup: {
-                inline_keyboard: [
-                    [
-                        { text: 'Выбрать группу', callback_data: 'start_select_group' },
-                        { text: 'Добавить группу', callback_data: 'start_add_group' }
-                    ],
-                    [
-                        { text: '⬅️ Назад', callback_data: 'start_group_prev' },
-                        { text: 'Вперед ➡️', callback_data: 'start_group_next' }
-                    ]
-                ]
+            else if (getUserPage(userId) == 0) {
+                setUserPage(userId, quantityOfGroups);
             }
-        });
+            else {
+                setUserPage(userId, getUserPage(userId) - 1);
+            }
+
+            bot.editMessageText(`Какая вам группа нужна?
+Выберите из ниже предложенных:
+            ` + array[getUserPage(userId)].name, {
+                chat_id: message.chat.id,
+                message_id: message.message_id,
+                reply_markup: {
+                    inline_keyboard: [
+                        [
+                            { text: 'Выбрать группу', callback_data: 'start_select_group' },
+                            { text: 'Добавить группу', callback_data: 'start_add_group' }
+                        ],
+                        [
+                            { text: '⬅️ Назад', callback_data: 'start_group_prev' },
+                            { text: 'Вперед ➡️', callback_data: 'start_group_next' }
+                        ]
+                    ]
+                }
+            });
+        // Нажатие на кнопку вперёд
+        } else if (data === 'start_group_next') {
+            if (getUserPage(userId) == -1) {
+                setUserPage(userId, 0);
+            }
+            else if (getUserPage(userId) == quantityOfGroups) {
+                setUserPage(userId, 0);
+            }
+            else {
+                setUserPage(userId, getUserPage(userId) + 1);
+            }
+
+            bot.editMessageText(`Какая вам группа нужна?
+Выберите из ниже предложенных:
+            ` + array[getUserPage(userId)].name, {
+                chat_id: message.chat.id,
+                message_id: message.message_id,
+                reply_markup: {
+                    inline_keyboard: [
+                        [
+                            { text: 'Выбрать группу', callback_data: 'start_select_group' },
+                            { text: 'Добавить группу', callback_data: 'start_add_group' }
+                        ],
+                        [
+                            { text: '⬅️ Назад', callback_data: 'start_group_prev' },
+                            { text: 'Вперед ➡️', callback_data: 'start_group_next' }
+                        ]
+                    ]
+                }
+            });
+        } else if (data === 'start_add_group') {
+            bot.sendMessage(message.chat.id, 'Введите, пожалуйста, название группы.');
+
+            waitingForAnswer[message.chat.id] = 'start_add_group';
+        }
     }
-  }
-  catch(e) {
-    console.log(e);
-  }
-  
-  bot.answerCallbackQuery(callbackQuery.id);
+    catch(e) {
+        console.log(e);
+    }
+    
+    bot.answerCallbackQuery(callbackQuery.id);
 });
 
+// Реакция на сообщения пользователей
+bot.on('message', async (msg) => {
+    const chatId = msg.chat.id;
+
+    if (waitingForAnswer[chatId] === 'start_add_group') {
+        const groupName = msg.text;
+
+        try {
+            await db.query('INSERT INTO NotConfGr (name, confirmed) VALUES (?, ?)', [groupName, false]);
+            await bot.sendMessage(chatId, `Заявка на подтверждение группы "${groupName}" успешно отправлена!`);
+        } catch (e) {
+            console.error(e);
+            await bot.sendMessage(chatId, 'Произошла ошибка при добавлении группы.');
+        }
+
+        delete waitingForAnswer[chatId];
+    }
+});
+
+// Команда для вывода доступных команд
 bot.onText(/\/help/, (msg) => {
     const chatId = msg.chat.id;
     const helpText = `Доступные команды:
