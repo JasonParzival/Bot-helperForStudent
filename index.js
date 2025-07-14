@@ -62,8 +62,9 @@ function getUserPage(userId) {
 bot.on('callback_query', async (callbackQuery) => {
     const message = callbackQuery.message;
     const data = callbackQuery.data;
+    const user = callbackQuery.from;
 
-    const userId = message.chat.id;
+    const userId = user.id;
 
     // Реализовал запрос к БД, но это плохая реализация, ведь
     // каждый раз когда пользователь будет нажимать на кнопку
@@ -141,6 +142,15 @@ bot.on('callback_query', async (callbackQuery) => {
                 waitingForAnswer[message.chat.id] = 'start_add_group';
             // Нажатие на "Выбрать группу"
             } else if (data === 'start_select_group') {
+                await db.query('INSERT INTO users (username, role, group_id, tg_id) VALUES (?, ?, ?, ?)', 
+                    [
+                        user.username,
+                        'none',
+                        array[getUserPage(userId)].id,
+                        userId
+                    ]
+                );
+
                 const options = {
                     reply_markup: {
                         inline_keyboard: [
@@ -163,11 +173,52 @@ bot.on('callback_query', async (callbackQuery) => {
             }
         } else if (data.startsWith('tasks_student_')) {
             if (data === 'tasks_student_printall') {
-                bot.sendMessage(message.chat.id, 'Ты нажал на задачи');
+                const [students] = await db.query('SELECT * FROM users WHERE tg_id = ? LIMIT 1', [userId]);
+                const student = students[0];
+
+                const [tasks] = await db.query(
+                    'SELECT * FROM tasks WHERE student_id = ? AND performed = ? ORDER BY deadline ASC', 
+                    [student.id, false]
+                );
+                console.log(tasks);
+
+                let messageOfTasks = '';
+                for (let i = 0; i < tasks.length; i++) {
+                    const task = tasks[i];
+
+                    messageOfTasks += `Задача: ${task.description}, Дедлайн: ${task.deadline}\n`;
+                }
+
+                try {
+                    await bot.sendMessage(message.chat.id, messageOfTasks);
+                } catch (e) {
+                    await bot.sendMessage(message.chat.id, 'Похоже, у вас нет задач!');
+                }
+                
             } else if (data === 'tasks_student_addtask') {
-                bot.sendMessage(message.chat.id, 'Ты нажал на добавление задачи');
+                const [subjects] = await db.query('SELECT sub_id FROM groupsubjects WHERE group_id = ?', [array[getUserPage(userId)].id]);
+
+                const subIds = subjects.map(s => s.sub_id);
+                const placeHolders = subIds.map(() => '?').join(',');
+
+                const [namesOfSubjects] = await db.query(
+                    `SELECT * FROM subjects WHERE id IN (${placeHolders})`,
+                    subIds
+                );
+
+                const inline_keyboard = namesOfSubjects.map((btn, index) => [
+                    { text: btn.name, callback_data: `subject_${index + 1}` }
+                ]);
+
+                const options = {
+                    reply_markup: {
+                        inline_keyboard
+                    }
+                };
+
+                bot.sendMessage(message.chat.id, 'Выберите предмет, по которому будет ваша задача', options);
             } else if (data === 'tasks_student_performtask') {
-                bot.sendMessage(message.chat.id, 'Ты нажал на выполнение задачи');
+                bot.sendMessage(message.chat.id, 'Ты нажал на выполнение задачи' + message.chat.id);
             }
         }
     }
