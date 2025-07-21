@@ -12,31 +12,58 @@ bot.setMyCommands([
     {command: '/help', description: 'Помощь'}
 ]);
 
+//-----------------------------------------------//
+// Кнопки
+const keyboardStart = {
+    inline_keyboard: [
+        [
+            { text: 'Выбрать группу', callback_data: 'start_select_group' },
+            { text: 'Добавить группу', callback_data: 'start_add_group' }
+        ],
+        [
+            { text: '⬅️ Назад', callback_data: 'start_group_prev' },
+            { text: 'Вперед ➡️', callback_data: 'start_group_next' }
+        ]
+    ]
+}
+
+const optionsStart = {
+    reply_markup: keyboardStart
+};
+
+const optionStartChoose = {
+    reply_markup: {
+        inline_keyboard: [
+            [
+                { text: 'Да', callback_data: 'start_choose_option_yes' },
+                { text: 'Нет', callback_data: 'start_choose_option_no' }
+            ]
+        ]
+    }
+}
+
 //Команда приветствия
-bot.onText(/\/start/, (msg) => {
+bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
 
-    const options = {
-        reply_markup: {
-            inline_keyboard: [
-                [
-                    { text: 'Выбрать группу', callback_data: 'start_select_group' },
-                    { text: 'Добавить группу', callback_data: 'start_add_group' }
-                ],
-                [
-                    { text: '⬅️ Назад', callback_data: 'start_group_prev' },
-                    { text: 'Вперед ➡️', callback_data: 'start_group_next' }
-                ]
-            ]
-        }
-    };
+    const [existsUser] = await db.query('SELECT * FROM users WHERE tg_id = ?', [chatId]);
 
-    bot.sendMessage(
-        chatId, 
-`Какая вам группа нужна?
+    if (existsUser.length === 0) {
+        bot.sendMessage(
+            chatId, 
+            `Какая вам группа нужна?
 Выберите из ниже предложенных:`, 
-        options
-    );
+            optionsStart
+        );
+    } else {
+        const [existsUserGroup] = await db.query('SELECT * FROM groups WHERE id = ?', [existsUser[0].group_id]);
+
+        bot.sendMessage(chatId, `Кажется, вы уже существуете в системе.
+Здравствуйте, ` + existsUser[0].username + `!
+Вы принадлежите группе: ` + existsUserGroup[0].name + `
+Желаете поменять свою принадлежность к группе?`, optionStartChoose
+        );
+    }
 });
 
 // Объект под состояния пользователей
@@ -92,18 +119,7 @@ bot.on('callback_query', async (callbackQuery) => {
                 ` + array[getUserPage(userId)].name, {
                     chat_id: message.chat.id,
                     message_id: message.message_id,
-                    reply_markup: {
-                        inline_keyboard: [
-                            [
-                                { text: 'Выбрать группу', callback_data: 'start_select_group' },
-                                { text: 'Добавить группу', callback_data: 'start_add_group' }
-                            ],
-                            [
-                                { text: '⬅️ Назад', callback_data: 'start_group_prev' },
-                                { text: 'Вперед ➡️', callback_data: 'start_group_next' }
-                            ]
-                        ]
-                    }
+                    reply_markup: keyboardStart
                 });
             // Нажатие на кнопку вперёд
             } else if (data === 'start_group_next') {
@@ -122,18 +138,7 @@ bot.on('callback_query', async (callbackQuery) => {
                 ` + array[getUserPage(userId)].name, {
                     chat_id: message.chat.id,
                     message_id: message.message_id,
-                    reply_markup: {
-                        inline_keyboard: [
-                            [
-                                { text: 'Выбрать группу', callback_data: 'start_select_group' },
-                                { text: 'Добавить группу', callback_data: 'start_add_group' }
-                            ],
-                            [
-                                { text: '⬅️ Назад', callback_data: 'start_group_prev' },
-                                { text: 'Вперед ➡️', callback_data: 'start_group_next' }
-                            ]
-                        ]
-                    }
+                    reply_markup: keyboardStart
                 });
             // Нажатие на "Добавить группу"
             } else if (data === 'start_add_group') {
@@ -142,14 +147,27 @@ bot.on('callback_query', async (callbackQuery) => {
                 waitingForAnswer[message.chat.id] = 'start_add_group';
             // Нажатие на "Выбрать группу"
             } else if (data === 'start_select_group') {
-                await db.query('INSERT INTO users (username, role, group_id, tg_id) VALUES (?, ?, ?, ?)', 
-                    [
-                        user.username,
-                        'none',
-                        array[getUserPage(userId)].id,
-                        userId
-                    ]
-                );
+                const [existsUser] = await db.query('SELECT * FROM users WHERE tg_id = ?', [userId]);
+
+                console.log(existsUser);
+
+                if (existsUser.length === 0) {
+                    await db.query('INSERT INTO users (username, role, group_id, tg_id) VALUES (?, ?, ?, ?)', 
+                        [
+                            user.username,
+                            'none',
+                            array[getUserPage(userId)].id,
+                            userId
+                        ]
+                    );
+                } else {
+                    await db.query('UPDATE users SET group_id = ? WHERE tg_id = ?', 
+                        [
+                            array[getUserPage(userId)].id,
+                            userId
+                        ]
+                    );
+                }
 
                 const options = {
                     reply_markup: {
@@ -169,6 +187,36 @@ bot.on('callback_query', async (callbackQuery) => {
 
                 bot.sendMessage(message.chat.id, `Отлично, вы выбрали группу.
 Доступные функции: `, options
+                );
+            } else if (data === 'start_choose_option_yes') {
+                setUserPage(userId, 0);
+
+                bot.sendMessage(
+                    message.chat.id, 
+                    `Какая вам группа нужна?
+Выберите из ниже предложенных:`, 
+                    optionsStart
+                );
+            } else if (data === 'start_choose_option_no') {
+                const [users] = await db.query('SELECT * FROM users WHERE tg_id = ?', [userId]);
+
+                const [group] = await db.query('SELECT * FROM groups WHERE id = ?', [users[0].group_id]);
+
+                const options = {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: 'Задачи', callback_data: 'tasks_student_printall' }],
+                            [{ text: 'Добавить задачу', callback_data: 'tasks_student_addtask' }],
+                            [{ text: 'Отметить как выполненное', callback_data: 'tasks_student_performtask' }]
+                        ]
+                    }
+                };
+
+                bot.sendMessage(
+                    message.chat.id,
+                    `Вы остались в своей группе: ` + group[0].name `
+Доступные функции: `,
+                    options
                 );
             }
         } else if (data.startsWith('tasks_student_')) {
