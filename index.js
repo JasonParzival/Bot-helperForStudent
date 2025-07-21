@@ -172,15 +172,9 @@ bot.on('callback_query', async (callbackQuery) => {
                 const options = {
                     reply_markup: {
                         inline_keyboard: [
-                            [
-                                { text: 'Задачи', callback_data: 'tasks_student_printall' },
-                            ],
-                            [
-                                { text: 'Добавить задачу', callback_data: 'tasks_student_addtask' }
-                            ],
-                            [
-                                { text: 'Отметить как выполненное', callback_data: 'tasks_student_performtask' },
-                            ]
+                            [{ text: 'Задачи', callback_data: 'tasks_student_printall' }],
+                            [{ text: 'Добавить задачу', callback_data: 'tasks_student_addtask' }],
+                            [{ text: 'Отметить как выполненное', callback_data: 'tasks_student_performtask' }]
                         ]
                     }
                 };
@@ -214,7 +208,7 @@ bot.on('callback_query', async (callbackQuery) => {
 
                 bot.sendMessage(
                     message.chat.id,
-                    `Вы остались в своей группе: ` + group[0].name `
+                    `Вы остались в своей группе: ` + group[0].name + `
 Доступные функции: `,
                     options
                 );
@@ -228,7 +222,6 @@ bot.on('callback_query', async (callbackQuery) => {
                     'SELECT * FROM tasks WHERE student_id = ? AND performed = ? ORDER BY deadline ASC', 
                     [student.id, false]
                 );
-                console.log(tasks);
 
                 let messageOfTasks = '';
                 for (let i = 0; i < tasks.length; i++) {
@@ -244,7 +237,10 @@ bot.on('callback_query', async (callbackQuery) => {
                 }
                 
             } else if (data === 'tasks_student_addtask') {
-                const [subjects] = await db.query('SELECT sub_id FROM groupsubjects WHERE group_id = ?', [array[getUserPage(userId)].id]);
+                const [students] = await db.query('SELECT * FROM users WHERE tg_id = ? LIMIT 1', [userId]);
+                const student = students[0];
+
+                const [subjects] = await db.query('SELECT sub_id FROM groupsubjects WHERE group_id = ?', [student.group_id]);
 
                 const subIds = subjects.map(s => s.sub_id);
                 const placeHolders = subIds.map(() => '?').join(',');
@@ -258,6 +254,8 @@ bot.on('callback_query', async (callbackQuery) => {
                     { text: btn.name, callback_data: `subject_${index + 1}` }
                 ]);
 
+                inline_keyboard.push([{ text: 'Добавить новый предмет для группы', callback_data: 'subject_add_new' }]);
+
                 const options = {
                     reply_markup: {
                         inline_keyboard
@@ -267,6 +265,42 @@ bot.on('callback_query', async (callbackQuery) => {
                 bot.sendMessage(message.chat.id, 'Выберите предмет, по которому будет ваша задача', options);
             } else if (data === 'tasks_student_performtask') {
                 bot.sendMessage(message.chat.id, 'Ты нажал на выполнение задачи' + message.chat.id);
+            }
+        } else if (data.startsWith('subject_')) {
+            if (data === 'subject_add_new') {
+                // Добавляем запрос к куратору, то есть добавляем новый предмет в таблицу с предметами ожидающих подтверждения.
+                // А если пользователи будут вводить уже существующие предметы, значит должен быть инструмент у админов, 
+                // чтобы присваивать сущ. предмет к суш. группе
+            } else {
+                const subjectIndex = parseInt(data.split('_')[1], 10);
+
+                if (isNaN(subjectIndex)) {
+                    return bot.answerCallbackQuery(callbackQuery.id, { text: 'Некорректный выбор предмета' });
+                }
+
+                const [students] = await db.query('SELECT * FROM users WHERE tg_id = ? LIMIT 1', [userId]);
+                const student = students[0];
+
+                const [subjects] = await db.query('SELECT sub_id FROM groupsubjects WHERE group_id = ?', [student.group_id]);
+
+                if (subjectIndex < 1 || subjectIndex > subjects.length) {
+                    return bot.answerCallbackQuery(callbackQuery.id, { text: 'Предмет вне диапазона' });
+                }
+
+                const selectedSubId = subjects[subjectIndex - 1].sub_id;
+
+                const [subjectRow] = await db.query('SELECT * FROM subjects WHERE id = ?', [selectedSubId]);
+                const subjectName = subjectRow.length > 0 ? subjectRow[0].name : 'Неизвестный';
+
+                bot.sendMessage(message.chat.id, `Вы выбрали предмет: ${subjectName}. 
+Введите описание задачи:`);
+
+                /*waitingForAnswer[userId] = {
+                    action: 'add_task_for_subject',
+                    subId: selectedSubId
+                };
+
+                bot.answerCallbackQuery(callbackQuery.id);*/
             }
         }
     }
