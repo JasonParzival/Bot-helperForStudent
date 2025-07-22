@@ -144,7 +144,12 @@ bot.on('callback_query', async (callbackQuery) => {
             } else if (data === 'start_add_group') {
                 bot.sendMessage(message.chat.id, 'Введите, пожалуйста, название группы.');
 
-                waitingForAnswer[message.chat.id] = 'start_add_group';
+                //waitingForAnswer[message.chat.id] = 'start_add_group';
+                waitingForAnswer[userId] = {
+                    act: 'start_add_group',
+                    obj: 0
+                };
+                
             // Нажатие на "Выбрать группу"
             } else if (data === 'start_select_group') {
                 const [existsUser] = await db.query('SELECT * FROM users WHERE tg_id = ?', [userId]);
@@ -226,8 +231,9 @@ bot.on('callback_query', async (callbackQuery) => {
                 let messageOfTasks = '';
                 for (let i = 0; i < tasks.length; i++) {
                     const task = tasks[i];
+                    const dateStr = task.deadline.toISOString().slice(0, 10);
 
-                    messageOfTasks += `Задача: ${task.description}, Дедлайн: ${task.deadline}\n`;
+                    messageOfTasks += `Задача: ${task.description}, Дедлайн: ${dateStr}\n`;
                 }
 
                 try {
@@ -284,7 +290,10 @@ bot.on('callback_query', async (callbackQuery) => {
 
                 bot.sendMessage(message.chat.id, `Вы решили добавить новый предмет)
 Напишите название: `);
-                waitingForAnswer[message.chat.id] = 'subject_add_new';
+                waitingForAnswer[userId] = {
+                    act: 'subject_add_new',
+                    obj: 0
+                };
             } else if (data.startsWith('subject_dop_')) {
                 const subjectIndex = parseInt(data.split('_dop_')[1], 10);
 
@@ -306,6 +315,11 @@ bot.on('callback_query', async (callbackQuery) => {
 
                 bot.sendMessage(message.chat.id, `Вы выбрали предмет: ${subjectDop.name}. 
 Введите описание задачи:`);
+
+                waitingForAnswer[userId] = {
+                    act: 'add_task_for_subject_dop',
+                    obj: subjectDop
+                };
             } else {
                 const subjectIndex = parseInt(data.split('_')[1], 10);
 
@@ -335,7 +349,60 @@ bot.on('callback_query', async (callbackQuery) => {
                     obj: subject[0]
                 };
 
-                bot.answerCallbackQuery(callbackQuery.id);
+                //bot.answerCallbackQuery(callbackQuery.id);
+            }
+        } else if (data.startsWith('add_task_')) {
+            if (data === 'add_task_for_subject_option_yes') {
+                let idTask = 0;
+
+                if (waitingForAnswer[userId].act === 'add_task_for_subject_options') {
+                    idTask = waitingForAnswer[userId].obj;
+                }
+                delete waitingForAnswer[userId]; 
+
+                const [tasks] = await db.query('SELECT * FROM tasks WHERE id = ?', [idTask]);
+                const task = tasks[0];
+
+                const [userGroup] = await db.query('SELECT group_id FROM users WHERE tg_id = ?', [userId]);
+
+                await db.query('INSERT INTO tasksOfGroups (description, group_id, deadline, confirmed, sub_id, ncsub_id) VALUES (?, ?, ?, ?, ?, ?)',
+                    [task.description, userGroup[0].group_id, task.deadline, false, task.sub_id, task.ncsub_id]
+                );
+
+                const options = {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: 'Задачи', callback_data: 'tasks_student_printall' }],
+                            [{ text: 'Добавить задачу', callback_data: 'tasks_student_addtask' }],
+                            [{ text: 'Отметить как выполненное', callback_data: 'tasks_student_performtask' }]
+                        ]
+                    }
+                };
+
+                bot.sendMessage( message.chat.id, `Заявка куратору отправлена!`);
+
+                bot.sendMessage(
+                    message.chat.id,
+                    `Доступные функции: `,
+                    options
+                );
+                
+            } else if (data === 'add_task_for_subject_option_no') {
+                const options = {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: 'Задачи', callback_data: 'tasks_student_printall' }],
+                            [{ text: 'Добавить задачу', callback_data: 'tasks_student_addtask' }],
+                            [{ text: 'Отметить как выполненное', callback_data: 'tasks_student_performtask' }]
+                        ]
+                    }
+                };
+
+                bot.sendMessage(
+                    message.chat.id,
+                    `Доступные функции: `,
+                    options
+                );
             }
         }
     }
@@ -350,86 +417,127 @@ bot.on('callback_query', async (callbackQuery) => {
 bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
 
-    if (waitingForAnswer[chatId] === 'start_add_group') {
-        const groupName = msg.text;
+    if (waitingForAnswer[chatId]) {
+        if (waitingForAnswer[chatId].act === 'start_add_group') {
+            const groupName = msg.text;
 
-        try {
-            await db.query('INSERT INTO NotConfGr (name, confirmed) VALUES (?, ?)', [groupName, false]);
-            await bot.sendMessage(chatId, `Заявка на подтверждение группы "${groupName}" успешно отправлена!
+            try {
+                await db.query('INSERT INTO NotConfGr (name, confirmed) VALUES (?, ?)', [groupName, false]);
+                await bot.sendMessage(chatId, `Заявка на подтверждение группы "${groupName}" успешно отправлена!
 Вам придёт уведомление`);
-        } catch (e) {
-            console.error(e);
-            await bot.sendMessage(chatId, 'Произошла ошибка при добавлении группы.');
-        }
+            } catch (e) {
+                console.error(e);
+                await bot.sendMessage(chatId, 'Произошла ошибка при добавлении группы.');
+            }
 
-        delete waitingForAnswer[chatId];
-    } else if (waitingForAnswer[chatId] === 'subject_add_new') {
-        const subjectName = msg.text;
+            delete waitingForAnswer[chatId];
+        } else if (waitingForAnswer[chatId].act === 'subject_add_new') {
+            const subjectName = msg.text;
 
-        try {
-            const [user] = await db.query('SELECT id FROM users WHERE tg_id = ?', [chatId]);
+            try {
+                const [user] = await db.query('SELECT id FROM users WHERE tg_id = ?', [chatId]);
 
-            await db.query('INSERT INTO notconfsubj (name, confirmed, user_id) VALUES (?, ?, ?)', [subjectName, false, user[0].id]);
-            await bot.sendMessage(chatId, `Заявка на подтверждение предмета "${subjectName}" для группы успешно отправлена!
+                await db.query('INSERT INTO notconfsubj (name, confirmed, user_id) VALUES (?, ?, ?)', [subjectName, false, user[0].id]);
+                await bot.sendMessage(chatId, `Заявка на подтверждение предмета "${subjectName}" для группы успешно отправлена!
 А пока можете его использовать для себя`);
-        } catch (e) {
-            console.error(e);
-            await bot.sendMessage(chatId, 'Произошла ошибка при добавлении предмета.');
-        }
+            } catch (e) { 
+                console.error(e);
+                await bot.sendMessage(chatId, 'Произошла ошибка при добавлении предмета.');
+            }
 
-        delete waitingForAnswer[chatId];
-    } else if (waitingForAnswer[chatId].act === 'add_task_for_subject') {
-        const descText = msg.text;
-        const subject = waitingForAnswer[chatId].obj;
+            delete waitingForAnswer[chatId];
+        } else if (waitingForAnswer[chatId].act === 'add_task_for_subject') {
+            const descText = msg.text;
+            const subject = waitingForAnswer[chatId].obj;
 
-        delete waitingForAnswer[chatId];
+            delete waitingForAnswer[chatId];
 
-        try {
-            const [user] = await db.query('SELECT id FROM users WHERE tg_id = ?', [chatId]);
+            try {
+                const [user] = await db.query('SELECT id FROM users WHERE tg_id = ?', [chatId]);
 
-            const [result] = await db.query(`INSERT INTO tasks (description, student_id, performed, sub_id, ncsub_id)
+                const [result] = await db.query(`INSERT INTO tasks (description, student_id, performed, sub_id, ncsub_id)
 VALUES (?, ?, ?, ?, ?)`, [descText, user[0].id, false, subject.id, 0]);
 
-            await bot.sendMessage(chatId, `А теперь укажи срок его выполнения в формате ГГГГ-ММ-ДД!`);
+                await bot.sendMessage(chatId, `А теперь укажи срок его выполнения в формате ГГГГ-ММ-ДД!`);
 
-            waitingForAnswer[chatId] = {
-                act: 'add_task_for_subject_deadline',
-                obj: result.insertId
-            };
-        } catch (e) {
-            console.error(e);
-            await bot.sendMessage(chatId, 'Произошла ошибка при добавлении задачи.');
-        }
-    } else if (waitingForAnswer[chatId].act === 'add_task_for_subject_deadline') {
-        const deadline = msg.text.trim();
-        const idTask = waitingForAnswer[chatId].obj;
+                waitingForAnswer[chatId] = {
+                    act: 'add_task_for_subject_deadline',
+                    obj: result.insertId
+                };
+            } catch (e) {
+                console.error(e);
+                await bot.sendMessage(chatId, 'Произошла ошибка при добавлении задачи.');
+            }
+        } else if (waitingForAnswer[chatId].act === 'add_task_for_subject_deadline') {
+            const deadline = msg.text.trim();
+            const idTask = waitingForAnswer[chatId].obj;
 
-        delete waitingForAnswer[chatId]; 
+            delete waitingForAnswer[chatId]; 
 
-        try {
-            const dateObj = new Date(deadline);
-            console.error(dateObj);
-            const deadlineForDb = dateObj.toISOString().slice(0,10);
-            console.error(deadlineForDb);
+            try {
+                const dateObj = new Date(deadline);
+                console.error(dateObj);
+                const deadlineForDb = dateObj.toISOString().slice(0,10);
+                console.error(deadlineForDb);
 
-            await db.query('UPDATE tasks SET deadline = ? WHERE id = ?', 
-                [
-                    deadlineForDb,
-                    idTask
-                ]
-            );
+                await db.query('UPDATE tasks SET deadline = ? WHERE id = ?', 
+                    [
+                        deadlineForDb,
+                        idTask
+                    ]
+                );
 
-            await bot.sendMessage(chatId, `Отлично, задача добавлена)`);
+                const options = {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [
+                                { text: 'Да', callback_data: 'add_task_for_subject_option_yes' },
+                                { text: 'Нет', callback_data: 'add_task_for_subject_option_no' }
+                            ]
+                        ]
+                    }
+                } 
 
-        } catch (e) {
-            console.error(e);
-            await bot.sendMessage(chatId, 'Пожалуйста, напишите правильно дату: ');
+                waitingForAnswer[chatId] = {
+                    act: 'add_task_for_subject_options',
+                    obj: idTask
+                };
 
-            waitingForAnswer[chatId] = {
-                act: 'add_task_for_subject_deadline',
-                obj: idTask
-            };
-        }
+                await bot.sendMessage(chatId, `Отлично, задача добавлена)
+Отправить запрос на добавление этой задачи куратору?`, options);
+
+            } catch (e) {
+                console.error(e);
+                await bot.sendMessage(chatId, 'Пожалуйста, напишите правильно дату: ');
+
+                waitingForAnswer[chatId] = {
+                    act: 'add_task_for_subject_deadline',
+                    obj: idTask
+                };
+            }
+        } else if (waitingForAnswer[chatId].act === 'add_task_for_subject_dop') { //////////////////
+            const descText = msg.text;
+            const subject = waitingForAnswer[chatId].obj;
+
+            delete waitingForAnswer[chatId];
+
+            try {
+                const [user] = await db.query('SELECT id FROM users WHERE tg_id = ?', [chatId]);
+
+                const [result] = await db.query(`INSERT INTO tasks (description, student_id, performed, sub_id, ncsub_id)
+VALUES (?, ?, ?, ?, ?)`, [descText, user[0].id, false, 0, subject.id]);
+
+                await bot.sendMessage(chatId, `А теперь укажи срок его выполнения в формате ГГГГ-ММ-ДД!`);
+
+                waitingForAnswer[chatId] = {
+                    act: 'add_task_for_subject_deadline',
+                    obj: result.insertId
+                };
+            } catch (e) {
+                console.error(e);
+                await bot.sendMessage(chatId, 'Произошла ошибка при добавлении задачи.');
+            }
+        } 
     }
 });
 
