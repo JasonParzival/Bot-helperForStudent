@@ -4,6 +4,8 @@ const db = require('./database');
 
 const token = require('./data.js');
 
+const { setIntervalAsync } = require('set-interval-async/dynamic');
+
 const bot = new TelegramBot(token, { polling: true });
 
 //Меню
@@ -52,6 +54,15 @@ const optionsTasks = {
     }
 };
 
+const optionsAdmin = {
+    reply_markup: {
+        inline_keyboard: [
+            [{ text: 'Выбрать группу пользователя', callback_data: 'admin_search_group' }],
+            [{ text: 'Выдать роль через его id', callback_data: 'admin_give_role_by_id' }]
+        ]
+    }
+};
+
 //Команда приветствия
 bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
@@ -63,7 +74,22 @@ bot.onText(/\/start/, async (msg) => {
             chatId, 
             `Какая вам группа нужна?
 Выберите из ниже предложенных:`, 
-            optionsStart
+            optionsAdmin
+        );
+    } else if (existsUser[0].role === 'Admin') {
+        bot.sendMessage(
+            chatId, 
+            `Здравствуйте, администратор!
+Вы можете только выдавать роли(
+Либо вы просто находите человека через первую кнопку
+Либо же через вторую кнопку вы указываете id пользователя и его роль 
+Выберите из ниже предложенных:`, 
+            optionsAdmin
+        );
+    } else if (existsUser[0].role === 'GroupManager') {
+        bot.sendMessage(
+            chatId, 
+            `Здравствуйте, куратор!`
         );
     } else {
         const [existsUserGroup] = await db.query('SELECT * FROM groups WHERE id = ?', [existsUser[0].group_id]);
@@ -75,6 +101,9 @@ bot.onText(/\/start/, async (msg) => {
         );
     }
 });
+
+// Объект под состояния администратора/куратора
+const waitingForAnswerAdmin = {};
 
 // Объект под состояния пользователей
 const waitingForAnswer = {};
@@ -452,6 +481,129 @@ bot.on('callback_query', async (callbackQuery) => {
                 `Доступные функции: `,
                 optionsTasks
             );
+        } else if (data.startsWith('admin_')) {
+            if (data === 'admin_search_group') {
+                const [groups] = await db.query('SELECT * FROM groups');
+
+                const inline_keyboard = groups.map((btn, index) => [
+                    { text: btn.name, callback_data: `group_admin_${index + 1}` }
+                ]);
+
+                const options = {
+                    reply_markup: {
+                        inline_keyboard
+                    }
+                }
+                bot.sendMessage(message.chat.id, 'Выберите группу', options);
+            } else if (data === 'admin_give_role_by_id') {
+                /*const options = {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [
+                                { text: 'Участник', callback_data: `role_admin_student_id_${studentID}` },
+                                { text: 'Куратор', callback_data: `role_admin_groupmanager_id_${studentID}` }
+                            ]
+                        ]
+                    }
+                }*/
+                bot.sendMessage(message.chat.id, 'Укажите его/её телеграмм ID');
+
+                waitingForAnswerAdmin[message.chat.id] = {
+                    act: 'write_tgid_of_user'
+                };
+            }
+        } else if (data.startsWith('group_admin_')) {
+            const groupIndex = parseInt(data.split('_admin_')[1], 10);
+
+            const [groups] = await db.query('SELECT * FROM groups');
+
+            const [students] = await db.query('SELECT * FROM users WHERE group_id = ?', [groups[groupIndex - 1].id]);
+
+            if (students.length === 0) {
+                bot.sendMessage(message.chat.id, 'Ни одного студента в этой группе');
+            } else {
+                const inline_keyboard = students.map((btn) => [
+                    { text: btn.username, callback_data: `student_admin_${btn.id}` }
+                ]);
+
+                const options = {
+                    reply_markup: {
+                        inline_keyboard
+                    }
+                }
+
+                bot.sendMessage(message.chat.id, 'Выберите студента', options);
+            }
+        } else if (data.startsWith('student_admin_')) {
+            const studentID = parseInt(data.split('_admin_')[1], 10);
+
+            const options = {
+                reply_markup: {
+                    inline_keyboard: [
+                        [
+                            { text: 'Участник', callback_data: `role_admin_student_id_${studentID}` },
+                            { text: 'Куратор', callback_data: `role_admin_groupmanager_id_${studentID}` }
+                        ]
+                    ]
+                }
+            }
+
+            bot.sendMessage(message.chat.id, 'Выберите роль', options);
+        } else if (data.startsWith('role_admin_')) {
+            if (data.startsWith('role_admin_student_')) {
+                if (data.startsWith('role_admin_student_id_')) {
+                    const studentID = parseInt(data.split('_id_')[1], 10);
+
+                    const role = 'Student';
+
+                    try {
+                        await db.query('UPDATE users SET role = ? WHERE id = ?', [role, studentID])
+
+                        bot.sendMessage(message.chat.id, 'Вы успешно поставили ему роль Ученика');
+                    } catch(e) {
+                        console.log(e);
+                    }
+                } else if (data.startsWith('role_admin_student_tgid_')) {
+                    const studentTGID = parseInt(data.split('_tgid_')[1], 10);
+
+                    const role = 'Student';
+
+                    try {
+                        await db.query('UPDATE users SET role = ? WHERE tg_id = ?', [role, studentTGID])
+
+                        bot.sendMessage(message.chat.id, 'Вы успешно поставили ему роль Ученика');
+                    } catch(e) {
+                        console.log(e);
+                    }
+                }
+                
+            } else if (data.startsWith('role_admin_groupmanager_')) {
+                if (data.startsWith('role_admin_groupmanager_id_')) {
+                    const studentID = parseInt(data.split('_id_')[1], 10);
+
+                    const role = 'GroupManager';
+
+                    try {
+                        await db.query('UPDATE users SET role = ? WHERE id = ?', [role, studentID])
+
+                        bot.sendMessage(message.chat.id, 'Вы успешно поставили ему роль Куратора');
+                    } catch(e) {
+                        console.log(e);
+                    }
+                } else if (data.startsWith('role_admin_groupmanager_tgid_')) {
+                    const studentTGID = parseInt(data.split('_id_')[1], 10);
+
+                    const role = 'GroupManager';
+
+                    try {
+                        await db.query('UPDATE users SET role = ? WHERE tg_id = ?', [role, studentTGID])
+
+                        bot.sendMessage(message.chat.id, 'Вы успешно поставили ему роль Куратора');
+                    } catch(e) {
+                        console.log(e);
+                    }
+                }
+            }
         }
     }
     catch(e) {
@@ -563,7 +715,7 @@ VALUES (?, ?, ?, ?, ?)`, [descText, user[0].id, false, subject.id, 0]);
                     obj: idTask
                 };
             }
-        } else if (waitingForAnswer[chatId].act === 'add_task_for_subject_dop') { //////////////////
+        } else if (waitingForAnswer[chatId].act === 'add_task_for_subject_dop') {
             const descText = msg.text;
             const subject = waitingForAnswer[chatId].obj;
 
@@ -586,6 +738,38 @@ VALUES (?, ?, ?, ?, ?)`, [descText, user[0].id, false, 0, subject.id]);
                 await bot.sendMessage(chatId, 'Произошла ошибка при добавлении задачи.');
             }
         } 
+    } else if (waitingForAnswerAdmin[chatId]) {
+        if (waitingForAnswerAdmin[chatId].act === 'write_tgid_of_user') {
+            let tgid = 0;
+            try {
+                tgid = parseInt(msg.text, 10);
+            } catch (e) {
+                console.log(e);
+                await bot.sendMessage(chatId, 'Вы неверно ввели айди');
+            }
+
+            if (tgid != 0) {
+                const options = {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [
+                                { text: 'Участник', callback_data: `role_admin_student_tgid_${tgid}` },
+                                { text: 'Куратор', callback_data: `role_admin_groupmanager_tgid_${tgid}` }
+                            ]
+                        ]
+                    }
+                }
+
+                bot.sendMessage(chatId, 'Выберите роль', options);
+            }
+            else {
+                await bot.sendMessage(chatId, 'Введите только цифры: ');
+
+                waitingForAnswerAdmin[chatId] = {
+                    act: 'write_tgid_of_user'
+                };
+            }
+        }
     }
 });
 
