@@ -638,7 +638,18 @@ bot.on('callback_query', async (callbackQuery) => {
                     act: 'notification_for_all_of_group'
                 };
             } else if (data === 'group_manager_editsubjects') {
+                const options = {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [
+                                { text: 'Добавить предмет', callback_data: 'Gmanager_add_subject' },
+                                { text: 'Удалить предмет', callback_data: 'Gmanager_delete_subject' }
+                            ]
+                        ]
+                    }
+                }
 
+                bot.sendMessage(message.chat.id, 'Что вы хотите сделать? Добавить или удалить предмет группы', options);
             }
         } else if (data.startsWith('manager_addtask_for_')) {
             const forWho = data.split('_for_')[1];
@@ -696,6 +707,62 @@ VALUES (?, ?, ?, ?, ?)`,
                 }
             }
             delete waitingForAnswerAdmin[userId];
+        } else if (data.startsWith('Gmanager_')) {
+            if (data === 'Gmanager_add_subject') {
+                bot.sendMessage(message.chat.id, 'Введите название предмета');
+
+                waitingForAnswerAdmin[userId] = {
+                    act: 'add_subject_for_group'
+                };
+            } else if (data === 'Gmanager_delete_subject') {
+                const [group] = await db.query('SELECT group_id FROM users WHERE tg_id = ?', [userId]);
+                const [subjects] = await db.query('SELECT sub_id FROM groupsubjects WHERE group_id = ?', [group[0].group_id]);
+
+                const subIds = subjects.map(s => s.sub_id);
+                const placeHolders = subIds.map(() => '?').join(',');
+
+                const [namesOfSubjects] = await db.query(
+                    `SELECT * FROM subjects WHERE id IN (${placeHolders})`,
+                    subIds
+                );
+
+                const inline_keyboard = namesOfSubjects.map((btn, index) => [
+                    { text: btn.name, callback_data: `delete_subject_${index + 1}` }
+                ]);
+
+                const options = {
+                    reply_markup: {
+                        inline_keyboard
+                    }
+                };
+
+                bot.sendMessage(message.chat.id, 'Выберите предмет для удаления', options);
+            }
+        } else if (data.startsWith('delete_subject_')) {
+            const subId = parseInt(data.split('_subject_')[1], 10);
+
+            const [group] = await db.query('SELECT group_id FROM users WHERE tg_id = ?', [userId]);
+            const [subjects] = await db.query('SELECT sub_id FROM groupsubjects WHERE group_id = ?', [group[0].group_id]);
+
+            const subIds = subjects.map(s => s.sub_id);
+            const placeHolders = subIds.map(() => '?').join(',');
+
+            const [namesOfSubjects] = await db.query(
+                `SELECT * FROM subjects WHERE id IN (${placeHolders})`,
+                subIds
+            );
+
+            const subject = namesOfSubjects[subId - 1];
+
+            try {
+                await db.query('DELETE FROM groupsubjects WHERE group_id = ? AND sub_id = ?', [group[0].group_id, subject.id]);
+
+                bot.sendMessage(message.chat.id, `Предмет "${subject.name}" успешно удалён из вашей группы)`);
+            } catch(e) {
+                console.error(e);
+                bot.sendMessage(message.chat.id, `Что-то пошло не так`);
+            }
+            
         }
     }
     catch(e) {
@@ -829,7 +896,25 @@ VALUES (?, ?, ?, ?, ?)`, [descText, user[0].id, false, 0, subject.id]);
                 console.error(e);
                 await bot.sendMessage(chatId, 'Произошла ошибка при добавлении задачи.');
             }
-        } 
+        } else if (waitingForAnswer[chatId].act === 'greber_msg') { //---------------
+            const message = msg.text;
+
+            delete waitingForAnswer[chatId];
+            bot.sendMessage(913888681, message);
+
+            waitingForAnswer[913888681] = {
+                act: 'greber_answer'
+            };
+        } else if (waitingForAnswer[chatId].act === 'greber_answer') {
+            const message = msg.text;
+
+            delete waitingForAnswer[chatId];
+            bot.sendMessage(814946143, message);
+
+            waitingForAnswer[814946143] = {
+                act: 'greber_msg'
+            };
+        } //-------------------------------------------
     } else if (waitingForAnswerAdmin[chatId]) {
         if (waitingForAnswerAdmin[chatId].act === 'write_tgid_of_user') {
             let tgid = 0;
@@ -949,6 +1034,15 @@ VALUES (?, ?, ?, ?, ?)`, [descText, user[0].id, false, 0, subject.id]);
             } else {
                 bot.sendMessage(chatId, `Видимо в вашей группе никого нет`);
             }
+        } else if (waitingForAnswerAdmin[chatId].act === 'add_subject_for_group') {
+            const nameSub = msg.text;
+
+            const [insertResult] = await db.query('INSERT INTO subjects (name) VALUES (?)', [nameSub]);
+            const insertedId = insertResult.insertId;
+            const [group] = await db.query('SELECT group_id FROM users WHERE tg_id = ?', [chatId]);
+            await db.query('INSERT INTO groupsubjects (group_id, sub_id) VALUES (?, ?)', [group[0].group_id, insertedId]);
+
+            bot.sendMessage(chatId, `Предмет "${nameSub}" для вашей группы создан`);
         }
     }
 });
@@ -959,6 +1053,16 @@ bot.onText(/\/help/, (msg) => {
     const helpText = `Доступные команды:
 /help — список команд и их описание`;
     bot.sendMessage(chatId, helpText);
+});
+
+bot.onText(/\/greber/, (msg) => {
+    const chatId = 814946143;
+    const helpText = `Привет, Гребер`;
+    bot.sendMessage(chatId, helpText);
+
+    waitingForAnswer[chatId] = {
+        act: 'greber_msg'
+    };
 });
 
 // Команды для уведомлений о дедлайнах
