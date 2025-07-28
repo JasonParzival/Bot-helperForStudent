@@ -58,7 +58,8 @@ const optionsAdmin = {
     reply_markup: {
         inline_keyboard: [
             [{ text: 'Выбрать группу пользователя', callback_data: 'admin_search_group' }],
-            [{ text: 'Выдать роль через его id', callback_data: 'admin_give_role_by_id' }]
+            [{ text: 'Выдать роль через его id', callback_data: 'admin_give_role_by_id' }],
+            [{ text: 'Запросы на добавление предмета', callback_data: 'manager_or_admin_add_sub' }]
         ]
     }
 };
@@ -625,7 +626,8 @@ bot.on('callback_query', async (callbackQuery) => {
                             [
                                 { text: 'Для группы', callback_data: 'manager_addtask_for_group' },
                                 { text: 'Себе', callback_data: 'manager_addtask_for_myself' }
-                            ]
+                            ],
+                            [ { text: 'Запросы на задачи от студентов', callback_data: 'manager_addtask_of_student' } ]
                         ]
                     }
                 }
@@ -644,22 +646,61 @@ bot.on('callback_query', async (callbackQuery) => {
                             [
                                 { text: 'Добавить предмет', callback_data: 'Gmanager_add_subject' },
                                 { text: 'Удалить предмет', callback_data: 'Gmanager_delete_subject' }
-                            ]
+                            ],
+                            [{ text: 'Запросы на добавление предмета', callback_data: 'manager_or_admin_add_sub' }]
                         ]
                     }
                 }
 
                 bot.sendMessage(message.chat.id, 'Что вы хотите сделать? Добавить или удалить предмет группы', options);
             }
-        } else if (data.startsWith('manager_addtask_for_')) {
-            const forWho = data.split('_for_')[1];
+        } else if (data.startsWith('manager_addtask_')) {
+            if (data.startsWith('manager_addtask_for_')) {
+                const forWho = data.split('_for_')[1];
 
-            bot.sendMessage(message.chat.id, 'Введите описание задачи');
+                bot.sendMessage(message.chat.id, 'Введите описание задачи');
 
-            waitingForAnswerAdmin[userId] = {
-                act: 'add_task_for_everyone_or_myself',
-                obj: forWho
-            };
+                waitingForAnswerAdmin[userId] = {
+                    act: 'add_task_for_everyone_or_myself',
+                    obj: forWho
+                };
+            } else if (data === 'manager_addtask_of_student') {
+                try {
+                    const [group] = await db.query('SELECT group_id FROM users WHERE tg_id = ?', [userId]);
+                    const [tasks] = await db.query('SELECT * FROM tasksofgroups WHERE group_id = ? AND confirmed = ?', [group[0].group_id, false]);
+
+                    const subIds = tasks.map(s => s.sub_id);
+                    const placeHolders = subIds.map(() => '?').join(',');
+
+                    const [namesOfSubjects] = await db.query(
+                        `SELECT * FROM subjects WHERE id IN (${placeHolders})`,
+                        subIds
+                    );
+
+                    let messageManager = '';
+                    for (let i = 0; i < tasks.length; i++) {
+                        messageManager += '' + (i + 1) + '. Задача: ' + tasks[i].description + '\n' +
+                        'Предмет: ' + namesOfSubjects[i].name + '\n' +
+                        'Срок до: ' + tasks[i].deadline + '\n'
+                    }
+
+                    const inline_keyboard = namesOfSubjects.map((btn, index) => [
+                        { text: index + 1, callback_data: `task_of_student_${index + 1}` }
+                    ]);
+
+                    console.log(inline_keyboard);
+
+                    const options = {
+                        reply_markup: {
+                            inline_keyboard
+                        }
+                    };
+
+                    bot.sendMessage(message.chat.id, messageManager + 'Выберите задачу для добавления к группе', options);
+                } catch(e) {
+                    bot.sendMessage(message.chat.id, 'Похоже, запросов на задач нет(');
+                }
+            }
         } else if (data.startsWith('groupManager_subject_')) {
             const subjectIndex = parseInt(data.split('_subject_')[1], 10);
 
@@ -762,8 +803,133 @@ VALUES (?, ?, ?, ?, ?)`,
                 console.error(e);
                 bot.sendMessage(message.chat.id, `Что-то пошло не так`);
             }
+
+        } else if (data.startsWith('task_of_student_')) {
+            const taskStudent = parseInt(data.split('_student_')[1], 10);
+
+            const [group] = await db.query('SELECT group_id FROM users WHERE tg_id = ?', [userId]);
+            const [tasks] = await db.query('SELECT * FROM tasksofgroups WHERE group_id = ? AND confirmed = ?', [group[0].group_id, false]);
+
+            const [students] = await db.query('SELECT id FROM users WHERE group_id = ?', [group[0].group_id]);
+            const subject = tasks[taskStudent - 1];
+
+            await db.query('UPDATE tasksofgroups SET confirmed = ? WHERE id = ?', [true, tasks[taskStudent - 1].id]);
+
+            for (let i = 0; i < students.length; i++) {
+                await db.query('INSERT INTO tasks (description, student_id, deadline, performed, sub_id, ncsub_id) VALUES (?, ?, ?, ?, ?, ?)',
+                    [subject.description, students[i].id, subject.deadline, false, subject.sub_id, subject.ncsub_id]
+                );
+            }
             
-        }
+            bot.sendMessage(message.chat.id, 'Задача от студенты успешно принята');
+        } else if (data.startsWith('manager_or_admin_add_sub')) {
+            const [existsUser] = await db.query('SELECT * FROM users WHERE tg_id = ?', [chatId]);
+
+            if (existsUser[0].role === 'Admin') {
+                const [ncsubjects] = await db.query('SELECT * FROM notconfsubj WHERE confirmed = ?', [false]);
+
+                const userIds = ncsubjects.map(s => s.user_id);
+                const placeHoldersF = userIds.map(() => '?').join(',');
+
+                const [groupsOfStudents] = await db.query(
+                    `SELECT group_id FROM users WHERE id IN (${placeHoldersF})`,
+                    userIds
+                ); 
+
+                const groupIds = groupsOfStudents.map(s => s.group_id);
+                const placeHoldersS = groupIds.map(() => '?').join(',');
+
+                const [namesOfGroups] = await db.query(
+                    `SELECT name FROM groups WHERE id IN (${placeHoldersS})`,
+                    groupIds
+                );
+
+                let messageAdmin = '';
+                for (let i = 0; i < namesOfGroups.length; i++) {
+                    messageAdmin += '' + (i + 1) + '. Название: ' + ncsubjects[i].name + '\n' +
+                    'Для группы: ' + namesOfGroups[i].name + '\n'
+                }
+
+                const inline_keyboard = ncsubjects.map((btn, index) => [
+                    { text: index + 1, callback_data: `add_subject_${index + 1}` }
+                ]);
+
+                const options = {
+                    reply_markup: {
+                        inline_keyboard
+                    }
+                };
+
+                bot.sendMessage(message.chat.id, messageAdmin + 'Выберите предмет для одобрения', options);
+            } else if (existsUser[0].role === 'GroupManager') {
+                const [students] = await db.query('SELECT * FROM users WHERE group_id = ?', [existsUser[0].group_id]);
+
+                const studentsIds = students.map(s => s.id);
+                const placeHoldersZ = studentsIds.map(() => '?').join(',');
+
+                const [ncsubjects] = await db.query(`SELECT * FROM notconfsubj WHERE confirmed = ? AND user_id IN (${placeHoldersZ})`, 
+                    [false, studentsIds]
+                );
+
+                const inline_keyboard = ncsubjects.map((btn, index) => [
+                    { text: btn.name, callback_data: `add_subject_${index + 1}` }
+                ]);
+
+                const options = {
+                    reply_markup: {
+                        inline_keyboard
+                    }
+                };
+
+                bot.sendMessage(message.chat.id, 'Выберите предмет для одобрения', options);
+            }
+        } else if (data.startsWith('add_subject_')) {
+            const subId = parseInt(data.split('_subject_')[1], 10); 
+            const [existsUser] = await db.query('SELECT * FROM users WHERE tg_id = ?', [chatId]);
+
+            if (existsUser[0].role === 'Admin') {
+                const [ncsubjects] = await db.query('SELECT * FROM notconfsubj WHERE confirmed = ?', [false]);
+
+                const userIds = ncsubjects.map(s => s.user_id);
+                const placeHoldersF = userIds.map(() => '?').join(',');
+
+                const [groupsOfStudents] = await db.query(
+                    `SELECT group_id FROM users WHERE id IN (${placeHoldersF})`,
+                    userIds
+                ); 
+
+                const groupIds = groupsOfStudents.map(s => s.group_id);
+                const placeHoldersS = groupIds.map(() => '?').join(',');
+
+                const [namesOfGroups] = await db.query(
+                    `SELECT id, name FROM groups WHERE id IN (${placeHoldersS})`,
+                    groupIds
+                );
+
+                const groups = namesOfGroups[subId - 1];
+
+                const [insert] = await db.query('INSERT INTO subjects (name) VALUES (?)', [ncsubjects[subId - 1].name]);
+                
+                await db.query('INSERT INTO groupsubjects (group_id, sub_id) VALUES (?, ?)', [groups.id, insert[0].insertId]);
+
+                bot.sendMessage(message.chat.id, 'Предмет успешно добавлен');
+            } else if (existsUser[0].role === 'GroupManager') {
+                const [students] = await db.query('SELECT * FROM users WHERE group_id = ?', [existsUser[0].group_id]);
+
+                const studentsIds = students.map(s => s.id);
+                const placeHoldersZ = studentsIds.map(() => '?').join(',');
+
+                const [ncsubjects] = await db.query(`SELECT * FROM notconfsubj WHERE confirmed = ? AND user_id IN (${placeHoldersZ})`, 
+                    [false, studentsIds]
+                );
+
+                const [insert] = await db.query('INSERT INTO subjects (name) VALUES (?)', [ncsubjects[subId - 1].name]);
+                
+                await db.query('INSERT INTO groupsubjects (group_id, sub_id) VALUES (?, ?)', [existsUser[0].group_id, insert[0].insertId]);
+
+                bot.sendMessage(message.chat.id, 'Предмет успешно добавлен для вашей группы');
+            }
+        }     // изменить запросы под LEFT JOIN!!!
     }
     catch(e) {
         console.log(e);
