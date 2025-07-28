@@ -632,7 +632,11 @@ bot.on('callback_query', async (callbackQuery) => {
 
                 bot.sendMessage(message.chat.id, 'Для кого вы хотите добавить задачу?', options);
             } else if (data === 'group_manager_sendnotification') {
+                bot.sendMessage(message.chat.id, `Напишите ваше сообщения для группы!`);
 
+                waitingForAnswerAdmin[userId] = {
+                    act: 'notification_for_all_of_group'
+                };
             } else if (data === 'group_manager_editsubjects') {
 
             }
@@ -874,49 +878,78 @@ VALUES (?, ?, ?, ?, ?)`, [descText, user[0].id, false, 0, subject.id]);
         } else if (waitingForAnswerAdmin[chatId].act === 'add_task_for_everyone_or_myself_deadline') {
             const forWho = waitingForAnswerAdmin[chatId].obj;
             const textTask = waitingForAnswerAdmin[chatId].text;
-
             const deadline = msg.text.trim();
-            const dateObj = new Date(deadline);
-            const deadlineForDb = dateObj.toISOString().slice(0,10);
 
             delete waitingForAnswerAdmin[chatId];
 
-            const [userGroup] = await db.query('SELECT group_id FROM users WHERE tg_id = ?', [chatId]);
-            const [subjects] = await db.query('SELECT sub_id FROM groupsubjects WHERE group_id = ?', [userGroup[0].group_id]);
+            try {
+                const dateObj = new Date(deadline);
+                const dateCheck = new Date();
+                const deadlineForDb = dateObj.toISOString().slice(0,10);
 
-            const subIds = subjects.map(s => s.sub_id);
-            const placeHolders = subIds.map(() => '?').join(',');
+                if (dateObj > dateCheck) {
+                    const [userGroup] = await db.query('SELECT group_id FROM users WHERE tg_id = ?', [chatId]);
+                    const [subjects] = await db.query('SELECT sub_id FROM groupsubjects WHERE group_id = ?', [userGroup[0].group_id]);
 
-            const [namesOfSubjects] = await db.query(
-                `SELECT * FROM subjects WHERE id IN (${placeHolders})`,
-                subIds
+                    const subIds = subjects.map(s => s.sub_id);
+                    const placeHolders = subIds.map(() => '?').join(',');
+
+                    const [namesOfSubjects] = await db.query(
+                        `SELECT * FROM subjects WHERE id IN (${placeHolders})`,
+                        subIds
+                    );
+
+                    const inline_keyboard = namesOfSubjects.map((btn, index) => [
+                        { text: btn.name, callback_data: `groupManager_subject_${index + 1}` }
+                    ]);
+
+                    const options = {
+                        reply_markup: {
+                            inline_keyboard
+                        }
+                    }
+
+                    waitingForAnswerAdmin[chatId] = {
+                        act: 'add_task_for_everyone_or_myself_subject',
+                        obj: forWho,
+                        deadline: deadlineForDb,
+                        text: textTask
+                    };
+
+                    bot.sendMessage(chatId, 'Выберите предмет', options);
+                } else {
+                    bot.sendMessage(chatId, 'Дедлайн не может быть в прошлом');
+
+                    waitingForAnswerAdmin[chatId] = {
+                        act: 'add_task_for_everyone_or_myself_deadline',
+                        obj: forWho,
+                        text: textTask
+                    };
+                }
+            } catch (e) {
+                bot.sendMessage(chatId, 'Вы неправильно ввели время, вводите в формате ГГГГ-ММ-ДД');
+                waitingForAnswerAdmin[chatId] = {
+                    act: 'add_task_for_everyone_or_myself_deadline',
+                    obj: forWho,
+                    text: textTask
+                };
+            }
+        } else if (waitingForAnswerAdmin[chatId].act === 'notification_for_all_of_group') {
+            const message = msg.text;
+
+            const [groupManager] = await db.query('SELECT username, group_id FROM users WHERE tg_id = ?', [chatId]);
+            const [students] = await db.query('SELECT * FROM users WHERE group_id = ? AND tg_id != ?', 
+                [groupManager[0].group_id, chatId]
             );
 
-            const inline_keyboard = namesOfSubjects.map((btn, index) => [
-                { text: btn.name, callback_data: `groupManager_subject_${index + 1}` }
-            ]);
-
-            const options = {
-                reply_markup: {
-                    inline_keyboard
-                }
+            if (students.length > 1) {
+                for (let i = 0; i < students.length; i++) {
+                    bot.sendMessage(students[i].tg_id, `Сообщение от куратора ${groupManager[0].username}:\n` + message);
+                } 
+            } else {
+                bot.sendMessage(chatId, `Видимо в вашей группе никого нет`);
             }
-
-            waitingForAnswerAdmin[chatId] = {
-                act: 'add_task_for_everyone_or_myself_subject',
-                obj: forWho,
-                deadline: deadlineForDb,
-                text: textTask
-            };
-
-            bot.sendMessage(chatId, 'Выберите предмет', options);
-            
-        } /*else if (waitingForAnswerAdmin[chatId].act === 'add_task_for_everyone_or_myself_subject') {
-            const forWho = waitingForAnswerAdmin[chatId].obj;
-            const text = waitingForAnswerAdmin[chatId].text;
-
-            
-        }*/
+        }
     }
 });
 
