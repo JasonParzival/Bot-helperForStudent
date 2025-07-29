@@ -59,7 +59,8 @@ const optionsAdmin = {
         inline_keyboard: [
             [{ text: 'Выбрать группу пользователя', callback_data: 'admin_search_group' }],
             [{ text: 'Выдать роль через его id', callback_data: 'admin_give_role_by_id' }],
-            [{ text: 'Запросы на добавление предмета', callback_data: 'manager_or_admin_add_sub' }]
+            [{ text: 'Запросы на добавление предмета', callback_data: 'manager_or_admin_add_sub' }],
+            [{ text: 'Запросы на добавление группы', callback_data: 'admin_add_group' }]
         ]
     }
 };
@@ -510,21 +511,24 @@ bot.on('callback_query', async (callbackQuery) => {
                 }
                 bot.sendMessage(message.chat.id, 'Выберите группу', options);
             } else if (data === 'admin_give_role_by_id') {
-                /*const options = {
-                    reply_markup: {
-                        inline_keyboard: [
-                            [
-                                { text: 'Участник', callback_data: `role_admin_student_id_${studentID}` },
-                                { text: 'Куратор', callback_data: `role_admin_groupmanager_id_${studentID}` }
-                            ]
-                        ]
-                    }
-                }*/
                 bot.sendMessage(message.chat.id, 'Укажите его/её телеграмм ID');
 
                 waitingForAnswerAdmin[message.chat.id] = {
                     act: 'write_tgid_of_user'
                 };
+            } else if (data === 'admin_add_group') {
+                const [groups] = await db.query('SELECT * FROM notconfgr WHERE confirmed = ?', [false]);
+
+                const inline_keyboard = groups.map((btn, index) => [
+                    { text: btn.name, callback_data: `ncgroup_admin_${index + 1}` }
+                ]);
+
+                const options = {
+                    reply_markup: {
+                        inline_keyboard
+                    }
+                }
+                bot.sendMessage(message.chat.id, 'Выберите группу, предложенную студентом', options);
             }
         } else if (data.startsWith('group_admin_')) {
             const groupIndex = parseInt(data.split('_admin_')[1], 10);
@@ -823,7 +827,7 @@ VALUES (?, ?, ?, ?, ?)`,
             
             bot.sendMessage(message.chat.id, 'Задача от студенты успешно принята');
         } else if (data.startsWith('manager_or_admin_add_sub')) {
-            const [existsUser] = await db.query('SELECT * FROM users WHERE tg_id = ?', [chatId]);
+            const [existsUser] = await db.query('SELECT * FROM users WHERE tg_id = ?', [userId]);
 
             if (existsUser[0].role === 'Admin') {
                 const [ncsubjects] = await db.query('SELECT * FROM notconfsubj WHERE confirmed = ?', [false]);
@@ -868,7 +872,7 @@ VALUES (?, ?, ?, ?, ?)`,
                 const placeHoldersZ = studentsIds.map(() => '?').join(',');
 
                 const [ncsubjects] = await db.query(`SELECT * FROM notconfsubj WHERE confirmed = ? AND user_id IN (${placeHoldersZ})`, 
-                    [false, studentsIds]
+                    [false, ...studentsIds]
                 );
 
                 const inline_keyboard = ncsubjects.map((btn, index) => [
@@ -885,7 +889,7 @@ VALUES (?, ?, ?, ?, ?)`,
             }
         } else if (data.startsWith('add_subject_')) {
             const subId = parseInt(data.split('_subject_')[1], 10); 
-            const [existsUser] = await db.query('SELECT * FROM users WHERE tg_id = ?', [chatId]);
+            const [existsUser] = await db.query('SELECT * FROM users WHERE tg_id = ?', [userId]);
 
             if (existsUser[0].role === 'Admin') {
                 const [ncsubjects] = await db.query('SELECT * FROM notconfsubj WHERE confirmed = ?', [false]);
@@ -910,7 +914,7 @@ VALUES (?, ?, ?, ?, ?)`,
 
                 const [insert] = await db.query('INSERT INTO subjects (name) VALUES (?)', [ncsubjects[subId - 1].name]);
                 
-                await db.query('INSERT INTO groupsubjects (group_id, sub_id) VALUES (?, ?)', [groups.id, insert[0].insertId]);
+                await db.query('INSERT INTO groupsubjects (group_id, sub_id) VALUES (?, ?)', [groups.id, insert.insertId]);
 
                 bot.sendMessage(message.chat.id, 'Предмет успешно добавлен');
             } else if (existsUser[0].role === 'GroupManager') {
@@ -920,16 +924,31 @@ VALUES (?, ?, ?, ?, ?)`,
                 const placeHoldersZ = studentsIds.map(() => '?').join(',');
 
                 const [ncsubjects] = await db.query(`SELECT * FROM notconfsubj WHERE confirmed = ? AND user_id IN (${placeHoldersZ})`, 
-                    [false, studentsIds]
+                    [false, ...studentsIds]
                 );
 
                 const [insert] = await db.query('INSERT INTO subjects (name) VALUES (?)', [ncsubjects[subId - 1].name]);
                 
-                await db.query('INSERT INTO groupsubjects (group_id, sub_id) VALUES (?, ?)', [existsUser[0].group_id, insert[0].insertId]);
+                await db.query('INSERT INTO groupsubjects (group_id, sub_id) VALUES (?, ?)', [existsUser[0].group_id, insert.insertId]);
+
+                await db.query('UPDATE notconfsubj SET confirmed = ? WHERE id = ?', [true, ncsubjects[0].id]);
 
                 bot.sendMessage(message.chat.id, 'Предмет успешно добавлен для вашей группы');
             }
-        }     // изменить запросы под LEFT JOIN!!!
+        }     // изменить запросы под LEFT JOIN!!! 
+        else if (data.startsWith('ncgroup_admin_')) {
+            const grId = parseInt(data.split('_subject_')[1], 10); 
+
+            const [groups] = await db.query('SELECT * FROM notconfgr WHERE confirmed = ?', [false]);
+
+            const confirmedGroup = groups[grId - 1];
+
+            await db.query('UPDATE notconfgr SET confirmed = ? WHERE id = ?', [true, confirmedGroup.id]);
+
+            await db.query('INSERT INTO groups (name) VALUES (?)', [confirmedGroup.name]);
+
+            bot.sendMessage(message.chat.id, 'Группа успешно добавлена)');
+        }
     }
     catch(e) {
         console.log(e);
@@ -1062,25 +1081,7 @@ VALUES (?, ?, ?, ?, ?)`, [descText, user[0].id, false, 0, subject.id]);
                 console.error(e);
                 await bot.sendMessage(chatId, 'Произошла ошибка при добавлении задачи.');
             }
-        } else if (waitingForAnswer[chatId].act === 'greber_msg') { //---------------
-            const message = msg.text;
-
-            delete waitingForAnswer[chatId];
-            bot.sendMessage(913888681, message);
-
-            waitingForAnswer[913888681] = {
-                act: 'greber_answer'
-            };
-        } else if (waitingForAnswer[chatId].act === 'greber_answer') {
-            const message = msg.text;
-
-            delete waitingForAnswer[chatId];
-            bot.sendMessage(814946143, message);
-
-            waitingForAnswer[814946143] = {
-                act: 'greber_msg'
-            };
-        } //-------------------------------------------
+        }
     } else if (waitingForAnswerAdmin[chatId]) {
         if (waitingForAnswerAdmin[chatId].act === 'write_tgid_of_user') {
             let tgid = 0;
@@ -1219,16 +1220,6 @@ bot.onText(/\/help/, (msg) => {
     const helpText = `Доступные команды:
 /help — список команд и их описание`;
     bot.sendMessage(chatId, helpText);
-});
-
-bot.onText(/\/greber/, (msg) => {
-    const chatId = 814946143;
-    const helpText = `Привет, Гребер`;
-    bot.sendMessage(chatId, helpText);
-
-    waitingForAnswer[chatId] = {
-        act: 'greber_msg'
-    };
 });
 
 // Команды для уведомлений о дедлайнах
