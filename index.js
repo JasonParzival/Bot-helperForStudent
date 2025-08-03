@@ -67,6 +67,7 @@ const optionsAdmin = {
 const optionsGroupManager = {
     reply_markup: {
         inline_keyboard: [
+            [{ text: 'Задачи', callback_data: 'tasks_student_printall' }],
             [{ text: 'Добавить задачу', callback_data: 'group_manager_addtask' }],
             [{ text: 'Отправить уведомление всей группе', callback_data: 'group_manager_sendnotification' }],
             [{ text: 'Редактирование предметов группы', callback_data: 'group_manager_editsubjects' }]
@@ -208,12 +209,10 @@ bot.on('callback_query', async (callbackQuery) => {
             } else if (data === 'start_add_group') {
                 bot.sendMessage(message.chat.id, 'Введите, пожалуйста, название группы.', cancelKeyboard);
 
-                //waitingForAnswer[message.chat.id] = 'start_add_group';
                 waitingForAnswer[userId] = {
                     act: 'start_add_group',
                     obj: 0
                 };
-                
             // Нажатие на "Выбрать группу"
             } else if (data === 'start_select_group') {
                 const [existsUser] = await db.query('SELECT * FROM users WHERE tg_id = ?', [userId]);
@@ -233,6 +232,9 @@ bot.on('callback_query', async (callbackQuery) => {
                                 array[getUserPage(userId)].id,
                                 userId
                             ]
+                        );
+                        bot.sendMessage(message.chat.id, `Отлично, вы выбрали группу.
+Доступные функции: `, optionsTasks
                         );
                     }
                 } else {
@@ -280,8 +282,6 @@ bot.on('callback_query', async (callbackQuery) => {
                     'SELECT * FROM tasks WHERE student_id = ? AND performed = ? ORDER BY deadline ASC', 
                     [student.id, false]
                 );
-
-                //const [subs] = await db.query('SELECT * FROM subjects WHERE tg_id = ? LIMIT 1', [userId]);
 
                 let messageOfTasks = '';
                 let k = 0;
@@ -353,7 +353,8 @@ bot.on('callback_query', async (callbackQuery) => {
 
                     bot.sendMessage(message.chat.id, 'Выберите предмет, по которому будет ваша задача', options);
                 } catch (e) {
-                    bot.sendMessage(message.chat.id, 'Видимо в вашей группе нет предметов, обратитесь к Куратору группы или же к Администратору');
+                    await bot.sendMessage(message.chat.id, 'Видимо в вашей группе нет предметов, обратитесь к Куратору группы или же к Администратору');
+                    bot.sendMessage(message.chat.id, `Доступные функции: `, optionsTasks);
                 }
             }
         } else if (data.startsWith('subject_')) {
@@ -386,7 +387,7 @@ bot.on('callback_query', async (callbackQuery) => {
 
                 const subjectDop = subjectsDop[subjectIndex - 1];
 
-                bot.sendMessage(message.chat.id, `Вы выбрали предмет: ${subjectDop.name}. 
+                await bot.sendMessage(message.chat.id, `Вы выбрали предмет: ${subjectDop.name}. 
 Введите описание задачи:`, cancelKeyboard);
 
                 waitingForAnswer[userId] = {
@@ -394,8 +395,8 @@ bot.on('callback_query', async (callbackQuery) => {
                     obj: subjectDop
                 };
 
-                bot.sendMessage(message.chat.id, `Шаблоны:`);
-                bot.sendMessage(message.chat.id, `1) Закрыть долги
+                await bot.sendMessage(message.chat.id, `Шаблоны:`);
+                await bot.sendMessage(message.chat.id, `1) Закрыть долги
 2) Сдать лабораторную работу
 3) Сдать курсовую работу
 4) Подготовиться к экзамену
@@ -421,7 +422,7 @@ bot.on('callback_query', async (callbackQuery) => {
                 const [subject] = await db.query('SELECT * FROM subjects WHERE id = ?', [selectedSubId]);
                 const subjectName = subject.length > 0 ? subject[0].name : 'Неизвестный';
 
-                bot.sendMessage(message.chat.id, `Вы выбрали предмет: ${subjectName}. 
+                await bot.sendMessage(message.chat.id, `Вы выбрали предмет: ${subjectName}. 
 Введите описание задачи:`, cancelKeyboard);
 
                 waitingForAnswer[userId] = {
@@ -429,8 +430,8 @@ bot.on('callback_query', async (callbackQuery) => {
                     obj: subject[0]
                 };
 
-                bot.sendMessage(message.chat.id, `Шаблоны:`);
-                bot.sendMessage(message.chat.id, `1) Закрыть долги
+                await bot.sendMessage(message.chat.id, `Шаблоны:`);
+                await bot.sendMessage(message.chat.id, `1) Закрыть долги
 2) Сдать лабораторную работу
 3) Сдать курсовую работу
 4) Подготовиться к экзамену
@@ -489,13 +490,21 @@ bot.on('callback_query', async (callbackQuery) => {
 
             await db.query('UPDATE tasks SET performed = ? WHERE id = ?', [true, currentTask.id]);
 
-            bot.sendMessage(message.chat.id, `Задача: ${currentTask.description} - выполнена!`);
+            await bot.sendMessage(message.chat.id, `Задача: ${currentTask.description} - выполнена!`);
 
-            bot.sendMessage(
-                message.chat.id,
-                `Доступные функции: `,
-                optionsTasks
-            );
+            if (student.role === 'GroupManager') {
+                await bot.sendMessage(
+                    message.chat.id,
+                    `Доступные функции: `,
+                    optionsGroupManager
+                );
+            } else {
+                await bot.sendMessage(
+                    message.chat.id,
+                    `Доступные функции: `,
+                    optionsTasks
+                );
+            }
         } else if (data.startsWith('admin_')) {
             if (data === 'admin_search_group') {
                 const [groups] = await db.query('SELECT * FROM groups');
@@ -699,7 +708,12 @@ bot.on('callback_query', async (callbackQuery) => {
 
                     bot.sendMessage(message.chat.id, messageManager + 'Выберите задачу для добавления к группе', options);
                 } catch(e) {
-                    bot.sendMessage(message.chat.id, 'Похоже, запросов на задач нет(');
+                    await bot.sendMessage(message.chat.id, 'Похоже, запросов на задач нет(');
+                    await bot.sendMessage(
+                        message.chat.id,
+                        `Доступные функции: `,
+                        optionsGroupManager
+                    );
                 }
             }
         } else if (data.startsWith('groupManager_subject_')) {
@@ -731,6 +745,11 @@ VALUES (?, ?, ?, ?, ?)`,
                         }
 
                         await bot.sendMessage(userId, `Отлично, задача для группы добавлена)`);
+                        await bot.sendMessage(
+                            userId,
+                            `Доступные функции: `,
+                            optionsGroupManager
+                        );
 
                     } catch (e) {
                         console.error(e);
@@ -742,6 +761,10 @@ VALUES (?, ?, ?, ?, ?)`,
     [waitingForAnswerAdmin[userId].text, waitingForAnswerAdmin[userId].deadline, student[0].id, false, subject.id]);
 
                         await bot.sendMessage(userId, `Отлично, задача для Вас добавлена)`);
+                        bot.sendMessage(
+                            userId, 
+                            `Доступные функции:`, optionsGroupManager
+                        );
 
                     } catch (e) {
                         console.error(e);
@@ -799,11 +822,16 @@ VALUES (?, ?, ?, ?, ?)`,
             try {
                 await db.query('DELETE FROM groupsubjects WHERE group_id = ? AND sub_id = ?', [group[0].group_id, subject.id]);
 
-                bot.sendMessage(message.chat.id, `Предмет "${subject.name}" успешно удалён из вашей группы)`);
+                await bot.sendMessage(message.chat.id, `Предмет "${subject.name}" успешно удалён из вашей группы)`);
             } catch(e) {
                 console.error(e);
-                bot.sendMessage(message.chat.id, `Что-то пошло не так`);
+                await bot.sendMessage(message.chat.id, `Что-то пошло не так`);
             }
+            await bot.sendMessage(
+                message.chat.id,
+                `Доступные функции: `,
+                optionsGroupManager
+            );
         } else if (data.startsWith('task_of_student_')) {
             const taskStudent = parseInt(data.split('_student_')[1], 10);
 
@@ -821,7 +849,12 @@ VALUES (?, ?, ?, ?, ?)`,
                 );
             }
             
-            bot.sendMessage(message.chat.id, 'Задача от студенты успешно принята');
+            await bot.sendMessage(message.chat.id, 'Задача от студенты успешно принята');
+            await bot.sendMessage(
+                message.chat.id,
+                `Доступные функции: `,
+                optionsGroupManager
+            );
         } else if (data.startsWith('manager_or_admin_add_sub')) {
             const [existsUser] = await db.query('SELECT * FROM users WHERE tg_id = ?', [userId]);
 
@@ -912,7 +945,12 @@ VALUES (?, ?, ?, ?, ?)`,
                 
                 await db.query('INSERT INTO groupsubjects (group_id, sub_id) VALUES (?, ?)', [groups.id, insert.insertId]);
 
-                bot.sendMessage(message.chat.id, 'Предмет успешно добавлен');
+                await bot.sendMessage(message.chat.id, 'Предмет успешно добавлен');
+                await bot.sendMessage(
+                    message.chat.id,
+                    `Доступные функции: `,
+                    optionsAdmin
+                );
             } else if (existsUser[0].role === 'GroupManager') {
                 const [students] = await db.query('SELECT * FROM users WHERE group_id = ?', [existsUser[0].group_id]);
 
@@ -929,7 +967,12 @@ VALUES (?, ?, ?, ?, ?)`,
 
                 await db.query('UPDATE notconfsubj SET confirmed = ? WHERE id = ?', [true, ncsubjects[0].id]);
 
-                bot.sendMessage(message.chat.id, 'Предмет успешно добавлен для вашей группы');
+                await bot.sendMessage(message.chat.id, 'Предмет успешно добавлен для вашей группы');
+                await bot.sendMessage(
+                    message.chat.id,
+                    `Доступные функции: `,
+                    optionsGroupManager
+                );
             }
         }     // изменить запросы под LEFT JOIN!!! 
         else if (data.startsWith('ncgroup_admin_')) {
@@ -944,6 +987,11 @@ VALUES (?, ?, ?, ?, ?)`,
             await db.query('INSERT INTO groups (name) VALUES (?)', [confirmedGroup.name]);
 
             bot.sendMessage(message.chat.id, 'Группа успешно добавлена)');
+            await bot.sendMessage(
+                message.chat.id,
+                `Доступные функции: `,
+                optionsAdmin
+            );
         } else if (data === 'cancel_action') {
             if (waitingForAnswer[userId]) {
                 delete waitingForAnswer[userId]; 
@@ -1121,17 +1169,21 @@ VALUES (?, ?, ?, ?, ?)`, [descText, user[0].id, false, 0, subject.id]);
                 };
             }
         } else if (waitingForAnswerAdmin[chatId].act === 'add_task_for_everyone_or_myself') {
-            const forWho = waitingForAnswerAdmin[chatId].obj;
+            try {
+                const forWho = waitingForAnswerAdmin[chatId].obj;
 
-            delete waitingForAnswerAdmin[chatId];
+                delete waitingForAnswerAdmin[chatId];
 
-            bot.sendMessage(chatId, 'Укажите срок его выполнения в формате ГГГГ-ММ-ДД!');
+                bot.sendMessage(chatId, 'Укажите срок его выполнения в формате ГГГГ-ММ-ДД!');
 
-            waitingForAnswerAdmin[chatId] = {
-                act: 'add_task_for_everyone_or_myself_deadline',
-                obj: forWho,
-                text: msg.text
-            };
+                waitingForAnswerAdmin[chatId] = {
+                    act: 'add_task_for_everyone_or_myself_deadline',
+                    obj: forWho,
+                    text: msg.text
+                };
+            } catch (e) {
+                console.log(e);
+            }
         } else if (waitingForAnswerAdmin[chatId].act === 'add_task_for_everyone_or_myself_deadline') {
             const forWho = waitingForAnswerAdmin[chatId].obj;
             const textTask = waitingForAnswerAdmin[chatId].text;
@@ -1204,7 +1256,12 @@ VALUES (?, ?, ?, ?, ?)`, [descText, user[0].id, false, 0, subject.id]);
                     bot.sendMessage(students[i].tg_id, `Сообщение от куратора ${groupManager[0].username}:\n` + message);
                 } 
             } else {
-                bot.sendMessage(chatId, `Видимо в вашей группе никого нет`);
+                await bot.sendMessage(chatId, `Видимо в вашей группе никого нет`);
+                await bot.sendMessage(
+                    chatId,
+                    `Доступные функции: `,
+                    optionsGroupManager
+                );
             }
         } else if (waitingForAnswerAdmin[chatId].act === 'add_subject_for_group') {
             const nameSub = msg.text;
@@ -1214,7 +1271,12 @@ VALUES (?, ?, ?, ?, ?)`, [descText, user[0].id, false, 0, subject.id]);
             const [group] = await db.query('SELECT group_id FROM users WHERE tg_id = ?', [chatId]);
             await db.query('INSERT INTO groupsubjects (group_id, sub_id) VALUES (?, ?)', [group[0].group_id, insertedId]);
 
-            bot.sendMessage(chatId, `Предмет "${nameSub}" для вашей группы создан`);
+            await bot.sendMessage(chatId, `Предмет "${nameSub}" для вашей группы создан`);
+            await bot.sendMessage(
+                chatId,
+                `Доступные функции: `,
+                optionsGroupManager
+            );
         }
     }
 });
