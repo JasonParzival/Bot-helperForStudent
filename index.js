@@ -48,8 +48,7 @@ const optionsTasks = {
     reply_markup: {
         inline_keyboard: [
             [{ text: 'Задачи', callback_data: 'tasks_student_printall' }],
-            [{ text: 'Добавить задачу', callback_data: 'tasks_student_addtask' }],
-            [{ text: 'Отметить как выполненное', callback_data: 'tasks_student_performtask' }]
+            [{ text: 'Добавить задачу', callback_data: 'tasks_student_addtask' }]
         ]
     }
 };
@@ -162,6 +161,7 @@ bot.on('callback_query', async (callbackQuery) => {
     const [array] = await db.query('SELECT * FROM Groups');
     const quantityOfGroups = array.length - 1;
 
+    console.log(getUserPage(userId));
     console.log(data);
 
     try {
@@ -218,32 +218,41 @@ bot.on('callback_query', async (callbackQuery) => {
             } else if (data === 'start_select_group') {
                 const [existsUser] = await db.query('SELECT * FROM users WHERE tg_id = ?', [userId]);
 
-                console.log(existsUser);
-
+                console.log(getUserPage(userId));
                 if (existsUser.length === 0) {
-                    await db.query('INSERT INTO users (username, role, group_id, tg_id) VALUES (?, ?, ?, ?)', 
-                        [
-                            user.username,
-                            'none',
-                            array[getUserPage(userId)].id,
-                            userId
-                        ]
-                    );
+                    if (getUserPage(userId) == -1) {
+                        bot.sendMessage(message.chat.id, `Вы не выбрали группу
+Какая вам группа нужна?
+Выберите из ниже предложенных`, optionsStart
+                        );
+                    } else {
+                        await db.query('INSERT INTO users (username, role, group_id, tg_id) VALUES (?, ?, ?, ?)', 
+                            [
+                                user.username,
+                                'none',
+                                array[getUserPage(userId)].id,
+                                userId
+                            ]
+                        );
+                    }
                 } else {
-                    await db.query('UPDATE users SET group_id = ? WHERE tg_id = ?', 
-                        [
-                            array[getUserPage(userId)].id,
-                            userId
-                        ]
-                    );
-                }
-
-                bot.sendMessage(message.chat.id, `Отлично, вы выбрали группу.
+                    if (getUserPage(userId) == -1) {
+                        bot.sendMessage(message.chat.id, `Вы не выбрали группу, вы остались в той же.
 Доступные функции: `, optionsTasks
-                );
+                        );
+                    } else {
+                        await db.query('UPDATE users SET group_id = ? WHERE tg_id = ?', 
+                            [
+                                array[getUserPage(userId)].id,
+                                userId
+                            ]
+                        );
+                        bot.sendMessage(message.chat.id, `Отлично, вы выбрали группу.
+Доступные функции: `, optionsTasks
+                        );
+                    }
+                }
             } else if (data === 'start_choose_option_yes') {
-                setUserPage(userId, 0);
-
                 bot.sendMessage(
                     message.chat.id, 
                     `Какая вам группа нужна?
@@ -272,20 +281,43 @@ bot.on('callback_query', async (callbackQuery) => {
                     [student.id, false]
                 );
 
+                //const [subs] = await db.query('SELECT * FROM subjects WHERE tg_id = ? LIMIT 1', [userId]);
+
                 let messageOfTasks = '';
+                let k = 0;
                 for (let i = 0; i < tasks.length; i++) {
                     const task = tasks[i];
                     const dateStr = task.deadline.toISOString().slice(0, 10);
 
-                    messageOfTasks += `Задача: ${task.description}, Дедлайн: ${dateStr}\n`;
+                    k++;
+
+                    let nameSub = '';
+                    if (task.sub_id == 0) {
+                        const [ncsub] = await db.query('SELECT * FROM notconfsubj WHERE id = ?', [task.ncsub_id]);
+                        nameSub = ncsub[0].name;
+                    } else {
+                        const [sub] = await db.query('SELECT * FROM subjects WHERE id = ?', [task.sub_id]);
+                        nameSub = sub[0].name;
+                    }
+                    
+                    messageOfTasks += `${k}. Задача: ${task.description}, Предмет: ${nameSub}, Дедлайн: ${dateStr}\n`;
                 }
 
+                const inline_keyboard = tasks.map((btn, index) => [
+                    { text: index + 1, callback_data: `perform_task_${index + 1}` }
+                ]);
+
+                const options = {
+                    reply_markup: {
+                        inline_keyboard
+                    }
+                };
+
                 try {
-                    await bot.sendMessage(message.chat.id, messageOfTasks);
+                    await bot.sendMessage(message.chat.id, messageOfTasks, options);
                 } catch (e) {
                     await bot.sendMessage(message.chat.id, 'Похоже, у вас нет задач!');
                 }
-                
             } else if (data === 'tasks_student_addtask') {
                 try {
                     const [students] = await db.query('SELECT * FROM users WHERE tg_id = ? LIMIT 1', [userId]);
@@ -323,62 +355,6 @@ bot.on('callback_query', async (callbackQuery) => {
                 } catch (e) {
                     bot.sendMessage(message.chat.id, 'Видимо в вашей группе нет предметов, обратитесь к Куратору группы или же к Администратору');
                 }
-            } else if (data === 'tasks_student_performtask') {
-                const [student] =  await db.query('SELECT * FROM users WHERE tg_id = ?', [userId]);
-
-                const [tasks] = await db.query('SELECT * FROM tasks WHERE performed = ? AND student_id = ?', [false, student[0].id]);
-
-                const subjectIds = {};
-
-                let k = 1;
-
-                tasks.forEach(task => {
-                    if (task.sub_id && task.sub_id !== 0) {
-                        subjectIds[k] = {
-                            name: 'subject',
-                            idSub: task.sub_id
-                        };
-                        k++;
-                    }
-                      
-                    if (task.ncsub_id && task.ncsub_id !== 0) {
-                        subjectIds[k] = {
-                            name: 'subject_dop',
-                            idSub: task.ncsub_id
-                        };
-                        k++;
-                    }
-                });
-
-                const subjectNames = {};
-
-                for (let i = 1; i < k; i++) {
-                    let name = [];
-                    if (subjectIds[i].name === 'subject') {
-                        [name] = await db.query('SELECT name FROM subjects WHERE id = ?', [subjectIds[i].idSub]);
-                    } else {
-                        [name] = await db.query('SELECT name FROM notconfsubj WHERE id = ?', [subjectIds[i].idSub]);
-                    }
-                    console.log(subjectIds[i].name );
-                    subjectNames[i] = {
-                        name: name[0].name,
-                    };
-                }
-
-                const inline_keyboard = tasks.map((btn, index) => [
-                    { text: subjectNames[index + 1].name + ':\n' + btn.description, callback_data: `perform_task_${index + 1}` }
-                ]);
-
-                const options = {
-                    reply_markup: {
-                        inline_keyboard
-                    }
-                };
-
-                // Пока что с такой реализацией работаем, возможно нужно будет все названия перетащить в сообщение, а в кнопках 
-                // оставить лишь их номера
-
-                bot.sendMessage(message.chat.id, 'Выберите задачу, которую хотите закончить: ', options);
             }
         } else if (data.startsWith('subject_')) {
             if (data === 'subject_add_new') {
@@ -503,7 +479,7 @@ bot.on('callback_query', async (callbackQuery) => {
             const [students] = await db.query('SELECT * FROM users WHERE tg_id = ? LIMIT 1', [userId]);
             const student = students[0];
 
-            const [tasks] = await db.query('SELECT * FROM tasks WHERE performed = ? AND student_id = ?', [false, student.id]);
+            const [tasks] = await db.query('SELECT * FROM tasks WHERE performed = ? AND student_id = ? ORDER BY deadline ASC', [false, student.id]);
 
             if (taskIndex < 1 || taskIndex > tasks.length) {
                 return bot.answerCallbackQuery(callbackQuery.id, { text: 'Предмет вне диапазона' });
