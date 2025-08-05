@@ -92,14 +92,14 @@ bot.onText(/\/start/, async (msg) => {
     let sentMsg;
 
     if (existsUser.length === 0) {
-        bot.sendMessage(
+        sentMsg = await bot.sendMessage(
             chatId, 
             `Какая вам группа нужна?
 Выберите из ниже предложенных:`, 
             optionsStart
         );
     } else if (existsUser[0].role === 'Admin') {
-        bot.sendMessage(
+        sentMsg = await bot.sendMessage(
             chatId, 
             `Здравствуйте, администратор!
 Вы можете только выдавать роли(
@@ -111,7 +111,7 @@ bot.onText(/\/start/, async (msg) => {
     } else if (existsUser[0].role === 'GroupManager') {
         const [groups] = await db.query('SELECT name FROM groups WHERE id = ?', [existsUser[0].group_id]);
 
-        bot.sendMessage(
+        sentMsg = await bot.sendMessage(
             chatId, 
             `Здравствуйте, куратор группы ${groups[0].name}!
 Для Вас доступны следующие функции:`, optionsGroupManager
@@ -174,21 +174,7 @@ bot.on('callback_query', async (callbackQuery) => {
 
     const userId = user.id;
 
-    // Реализовал запрос к БД, но это плохая реализация, ведь
-    // каждый раз когда пользователь будет нажимать на кнопку
-    // будет происходить запрос к БД, что не есть хорошо
-    // Нужно будет придумать другой способ
-    const [array] = await db.query('SELECT * FROM Groups');
-    const quantityOfGroups = array.length - 1;
-
-    console.log(getUserPage(userId));
-    console.log(data);
-
-    if (data === 'start_group_prev' || data === 'start_group_next') {
-        if (deletingMessages[userId]) {
-            delete deletingMessages[userId];
-        }
-    } else {
+    if (!(data === 'start_group_prev' || data === 'start_group_next' || data === 'cancel_action')) {
         deleteLastMessage(userId);
     }
 
@@ -196,6 +182,9 @@ bot.on('callback_query', async (callbackQuery) => {
 
     try {
         if (data.startsWith('start_')) {
+            const [array] = await db.query('SELECT * FROM Groups');
+            const quantityOfGroups = array.length - 1;
+
             // Нажатие на кнопку назад
             if (data === 'start_group_prev') {
                 if (getUserPage(userId) == -1) {
@@ -246,17 +235,6 @@ bot.on('callback_query', async (callbackQuery) => {
             } else if (data === 'start_select_group') {
                 const [existsUser] = await db.query('SELECT * FROM users WHERE tg_id = ?', [userId]);
 
-                /*if (deletingMessages[userId]) {
-                    console.log(deletingMessages[userId]);
-                    try {
-                        await bot.deleteMessage(userId, deletingMessages[userId]);
-                    } catch (error) {
-                        console.error('Ошибка при удалении сообщения:', error);
-                    }
-                }
-                delete deletingMessages;*/
-                //deleteLastMessage(userId);
-
                 if (existsUser.length === 0) {
                     if (getUserPage(userId) == -1) {
                         sentMsg = await bot.sendMessage(message.chat.id, `Вы не выбрали группу
@@ -294,25 +272,12 @@ bot.on('callback_query', async (callbackQuery) => {
                     }
                 }
             } else if (data === 'start_choose_option_yes') {
-                /*if (deletingMessages[userId]) {
-                    console.log(deletingMessages[userId]);
-                    try {
-                        await bot.deleteMessage(userId, deletingMessages[userId]);
-                    } catch (error) {
-                        console.error('Ошибка при удалении сообщения:', error);
-                    }
-                }
-                delete deletingMessages;*/
-                //deleteLastMessage(userId);
-
                 sentMsg = await bot.sendMessage(
                     message.chat.id, 
                     `Какая вам группа нужна?
 Выберите из ниже предложенных:`, 
                     optionsStart
                 );
-
-                //deletingMessages[userId] = sentMsg.message_id;
             } else if (data === 'start_choose_option_no') {
                 const [users] = await db.query('SELECT * FROM users WHERE tg_id = ?', [userId]);
 
@@ -514,8 +479,7 @@ bot.on('callback_query', async (callbackQuery) => {
                     message.chat.id,
                     `Доступные функции: `,
                     optionsTasks
-                );
-                
+                ); 
             } else if (data === 'add_task_for_subject_option_no') {
                 sentMsg = await bot.sendMessage(
                     message.chat.id,
@@ -1071,11 +1035,31 @@ VALUES (?, ?, ?, ?, ?)`,
         } else if (data === 'cancel_action') {
             if (waitingForAnswer[userId]) {
                 delete waitingForAnswer[userId]; 
-                bot.sendMessage(message.chat.id, 'Действие отменено.');
+                await bot.sendMessage(message.chat.id, 'Действие отменено.');
+                sentMsg = await bot.sendMessage(
+                    message.chat.id,
+                    `Доступные функции: `,
+                    optionsTasks
+                );
             }
             if (waitingForAnswerAdmin[userId]) {
                 delete waitingForAnswerAdmin[userId];
-                bot.sendMessage(message.chat.id, 'Действие отменено.');
+                await bot.sendMessage(message.chat.id, 'Действие отменено.');
+
+                const [user] = await db.query('SELECT role FROM users WHERE tg_id = ?', [userId]);
+                if (user == 'Admin') {
+                    sentMsg = await bot.sendMessage(
+                        message.chat.id,
+                        `Доступные функции: `,
+                        optionsAdmin
+                    );
+                } else {
+                    sentMsg = await bot.sendMessage(
+                        message.chat.id,
+                        `Доступные функции: `,
+                        optionsGroupManager
+                    );
+                }
             }
         }
     }
